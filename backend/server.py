@@ -359,6 +359,20 @@ async def get_stats():
         avgConfidence=round(avg_confidence, 2),
         topCategories=top_categories_formatted
     )
+    # Create the main app without a prefix
+app = FastAPI()
+
+# -----------------------------
+# ADD THIS HOME ROUTE HERE 👇
+# -----------------------------
+@app.get("/")
+def home():
+    return {"message": "API working!"}
+# -----------------------------
+
+# Create a router with the /api prefix
+api_router = APIRouter(prefix="/api")
+
 
 # Include the router in the main app
 app.include_router(api_router)
