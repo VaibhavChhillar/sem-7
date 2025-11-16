@@ -359,7 +359,7 @@ async def get_stats():
         avgConfidence=round(avg_confidence, 2),
         topCategories=top_categories_formatted
     )
-    # Create the main app without a prefix
+# Create the main app without a prefix
 app = FastAPI()
 
 # -----------------------------
@@ -373,9 +373,9 @@ def home():
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
-
 # Include the router in the main app
 app.include_router(api_router)
+
 
 app.add_middleware(
     CORSMiddleware,
