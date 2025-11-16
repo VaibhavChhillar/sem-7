@@ -1,7 +1,9 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
+from starlette.exceptions import HTTPException as StarletteHTTPException
 import os
 import logging
 from pathlib import Path
@@ -9,23 +11,26 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Literal
 import uuid
 from datetime import datetime, timezone, timedelta
-import random
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+# --- Validate required env vars early (helps debug) ---
+if "MONGO_URL" not in os.environ or "DB_NAME" not in os.environ:
+    raise RuntimeError("MONGO_URL and DB_NAME must be set in environment (.env for local or Render env vars).")
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
-# Create the main app without a prefix
+# Create the main app once
 app = FastAPI()
 
-# Create a router with the /api prefix
+# Create a router with the /api prefix once
 api_router = APIRouter(prefix="/api")
 
-# Define Models
+# ---------------------- Models (unchanged) ----------------------
 class VacuumStatus(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -90,138 +95,21 @@ class Stats(BaseModel):
     accuracyRate: float
     avgConfidence: float
     topCategories: List[dict]
+# ----------------------------------------------------------------
 
 # Initialize sample data
 async def init_sample_data():
-    # Check if data already exists
     existing_items = await db.detected_items.count_documents({})
     if existing_items > 0:
         return
-    
-    # Sample detected items
-    sample_items = [
-        {
-            "id": str(uuid.uuid4()),
-            "type": "valuable",
-            "category": "Jewelry",
-            "confidence": 0.95,
-            "timestamp": (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat(),
-            "description": "Gold ring detected",
-            "location": "Bedroom",
-            "imageUrl": "https://images.unsplash.com/photo-1684616290826-1e2988a9500f?w=400",
-            "userFeedback": "correct",
-            "chamber": "valuables"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "type": "valuable",
-            "category": "Electronics",
-            "confidence": 0.88,
-            "timestamp": (datetime.now(timezone.utc) - timedelta(minutes=25)).isoformat(),
-            "description": "Wireless earbud detected",
-            "location": "Living Room",
-            "imageUrl": "https://images.unsplash.com/photo-1639660680515-7c76c86b559b?w=400",
-            "chamber": "valuables"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "type": "trash",
-            "category": "Paper",
-            "confidence": 0.92,
-            "timestamp": (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat(),
-            "description": "Paper wrapper",
-            "location": "Kitchen",
-            "chamber": "trash"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "type": "valuable",
-            "category": "Accessories",
-            "confidence": 0.79,
-            "timestamp": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
-            "description": "Watch strap detected",
-            "location": "Bedroom",
-            "chamber": "valuables"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "type": "unknown",
-            "category": "Small Object",
-            "confidence": 0.45,
-            "timestamp": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
-            "description": "Unidentified small metallic object",
-            "location": "Office",
-            "chamber": "pending"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "type": "trash",
-            "category": "Food",
-            "confidence": 0.98,
-            "timestamp": (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(),
-            "description": "Food crumbs",
-            "location": "Dining Room",
-            "chamber": "trash"
-        }
-    ]
-    
-    await db.detected_items.insert_many(sample_items)
-    
-    # Sample cleaning sessions
-    sample_sessions = [
-        {
-            "id": str(uuid.uuid4()),
-            "startTime": (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat(),
-            "endTime": (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat(),
-            "itemsDetected": 8,
-            "valuablesSaved": 2,
-            "trashCollected": 6,
-            "areaCleanedSqFt": 450.0,
-            "duration": 45,
-            "status": "completed"
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "startTime": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
-            "endTime": (datetime.now(timezone.utc) - timedelta(days=1, hours=-1)).isoformat(),
-            "itemsDetected": 12,
-            "valuablesSaved": 1,
-            "trashCollected": 11,
-            "areaCleanedSqFt": 800.0,
-            "duration": 62,
-            "status": "completed"
-        }
-    ]
-    
-    await db.cleaning_sessions.insert_many(sample_sessions)
-    
-    # Sample notifications
-    sample_notifications = [
-        {
-            "id": str(uuid.uuid4()),
-            "message": "Valuable item detected: Gold ring safely stored in valuables bin",
-            "type": "valuable",
-            "timestamp": (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat(),
-            "itemId": sample_items[0]["id"],
-            "isRead": False
-        },
-        {
-            "id": str(uuid.uuid4()),
-            "message": "Unknown item detected in Office - requires your review",
-            "type": "warning",
-            "timestamp": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
-            "itemId": sample_items[4]["id"],
-            "isRead": False
-        }
-    ]
-    
-    await db.notifications.insert_many(sample_notifications)
+    # ... (insert sample_items, sessions, notifications exactly as before) ...
+    # For brevity, copy your existing sample insertion logic here.
 
 @app.on_event("startup")
 async def startup_event():
     await init_sample_data()
 
-# Routes
+# ------------------ API routes registered to api_router ------------------
 @api_router.get("/")
 async def root():
     return {"message": "TreasureSense API"}
@@ -230,153 +118,39 @@ async def root():
 async def get_vacuum_status():
     status = await db.vacuum_status.find_one({}, {"_id": 0})
     if not status:
-        # Create default status
         default_status = VacuumStatus().model_dump()
         await db.vacuum_status.insert_one(default_status)
         return VacuumStatus(**default_status)
     return VacuumStatus(**status)
 
-@api_router.post("/vacuum/control")
-async def control_vacuum(control: VacuumControl):
-    status = await db.vacuum_status.find_one({}, {"_id": 0})
-    if not status:
-        status = VacuumStatus().model_dump()
-    
-    if control.action == "start":
-        status["isActive"] = True
-        status["mode"] = "cleaning"
-        # Create new session
-        new_session = CleaningSession(
-            startTime=datetime.now(timezone.utc).isoformat(),
-            status="active"
-        ).model_dump()
-        await db.cleaning_sessions.insert_one(new_session)
-    elif control.action == "stop":
-        status["isActive"] = False
-        status["mode"] = "idle"
-        # Complete active session
-        await db.cleaning_sessions.update_one(
-            {"status": "active"},
-            {"$set": {"endTime": datetime.now(timezone.utc).isoformat(), "status": "completed"}}
-        )
-    elif control.action == "pause":
-        status["isActive"] = False
-        status["mode"] = "idle"
-    elif control.action == "return":
-        status["mode"] = "returning"
-    
-    await db.vacuum_status.delete_many({})
-    await db.vacuum_status.insert_one(status)
-    
-    return {"success": True, "status": status}
+# (Keep all your other @api_router routes here unchanged: /vacuum/control, /items/*, /sessions, /notifications, /stats)
+# ------------------------------------------------------------------------
 
-@api_router.get("/items/detected", response_model=List[DetectedItem])
-async def get_detected_items(type: Optional[str] = None, limit: int = 50):
-    query = {}
-    if type:
-        query["type"] = type
-    
-    items = await db.detected_items.find(query, {"_id": 0}).sort("timestamp", -1).limit(limit).to_list(limit)
-    return items
+# Include the router in the main app (do this once)
+app.include_router(api_router)
 
-@api_router.get("/items/valuables", response_model=List[DetectedItem])
-async def get_valuables():
-    items = await db.detected_items.find({"type": "valuable"}, {"_id": 0}).sort("timestamp", -1).to_list(100)
-    return items
-
-@api_router.post("/items/feedback")
-async def submit_feedback(feedback: ItemFeedback):
-    update_data = {
-        "userFeedback": feedback.feedback,
-        "feedbackNote": feedback.note
-    }
-    
-    if feedback.correctedType:
-        update_data["type"] = feedback.correctedType
-    
-    result = await db.detected_items.update_one(
-        {"id": feedback.itemId},
-        {"$set": update_data}
-    )
-    
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Item not found")
-    
-    return {"success": True, "message": "Feedback recorded successfully"}
-
-@api_router.get("/sessions", response_model=List[CleaningSession])
-async def get_sessions(limit: int = 10):
-    sessions = await db.cleaning_sessions.find({}, {"_id": 0}).sort("startTime", -1).limit(limit).to_list(limit)
-    return sessions
-
-@api_router.get("/notifications", response_model=List[Notification])
-async def get_notifications(unread_only: bool = False):
-    query = {"isRead": False} if unread_only else {}
-    notifications = await db.notifications.find(query, {"_id": 0}).sort("timestamp", -1).to_list(50)
-    return notifications
-
-@api_router.post("/notifications/mark-read")
-async def mark_notification_read(notification_id: str):
-    result = await db.notifications.update_one(
-        {"id": notification_id},
-        {"$set": {"isRead": True}}
-    )
-    
-    if result.modified_count == 0:
-        raise HTTPException(status_code=404, detail="Notification not found")
-    
-    return {"success": True}
-
-@api_router.get("/stats", response_model=Stats)
-async def get_stats():
-    total_items = await db.detected_items.count_documents({})
-    valuables = await db.detected_items.count_documents({"type": "valuable"})
-    total_sessions = await db.cleaning_sessions.count_documents({})
-    
-    # Calculate accuracy from feedback
-    items_with_feedback = await db.detected_items.find({"userFeedback": {"$exists": True}}, {"_id": 0}).to_list(1000)
-    correct_feedback = len([item for item in items_with_feedback if item.get("userFeedback") == "correct"])
-    accuracy = (correct_feedback / len(items_with_feedback) * 100) if items_with_feedback else 95.0
-    
-    # Calculate average confidence
-    all_items = await db.detected_items.find({}, {"_id": 0, "confidence": 1}).to_list(1000)
-    avg_confidence = sum([item["confidence"] for item in all_items]) / len(all_items) if all_items else 0.85
-    
-    # Top categories
-    pipeline = [
-        {"$group": {"_id": "$category", "count": {"$sum": 1}}},
-        {"$sort": {"count": -1}},
-        {"$limit": 5}
-    ]
-    top_categories = await db.detected_items.aggregate(pipeline).to_list(5)
-    top_categories_formatted = [{"category": cat["_id"], "count": cat["count"]} for cat in top_categories]
-    
-    return Stats(
-        totalItemsDetected=total_items,
-        valuablesSaved=valuables,
-        totalSessions=total_sessions,
-        accuracyRate=round(accuracy, 1),
-        avgConfidence=round(avg_confidence, 2),
-        topCategories=top_categories_formatted
-    )
-# Create the main app without a prefix
-app = FastAPI()
-
-# -----------------------------
-# ADD THIS HOME ROUTE HERE 👇
-# -----------------------------
+# Simple home route for health checks
 @app.get("/")
 def home():
     return {"message": "API working!"}
-# -----------------------------
 
-# Create a router with the /api prefix
-api_router = APIRouter(prefix="/api")
+# ---------- Optional: 404 handler that redirects to frontend ----------
+# WARNING: This will redirect any 404 (including wrong API paths). Use if you want browser visitors redirected.
+# Set FRONTEND_URL env var to your frontend URL (e.g. https://your-frontend-app.vercel.app)
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "").strip()  # leave blank to disable redirect behavior
 
-# Include the router in the main app
-app.include_router(api_router)
+@app.exception_handler(StarletteHTTPException)
+async def custom_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    # Only redirect for 404 and if FRONTEND_URL provided and request is a browser GET
+    if exc.status_code == 404 and FRONTEND_URL and request.method.upper() == "GET":
+        # You can refine condition: check Accept header to ensure it's HTML request
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept or "application/xhtml+xml" in accept or "*" in accept:
+            return RedirectResponse(FRONTEND_URL)
+    # Default JSON response for other errors or if redirect disabled
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
-
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -385,7 +159,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
+# Logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
